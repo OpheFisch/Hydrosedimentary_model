@@ -92,17 +92,6 @@ def criteria_are_valid(criteria, criteria_bounds):
     return all(low <= value <= high for value, (low, high) in zip(criteria, criteria_bounds))
 
 
-def _default_criteria_bounds(month):
-    """Return the original default GLUE acceptance ranges."""
-    if 5 <= month <= 9:
-        return [
-            [0.1, 2.75], [0.17, 1.2], [1, 99], [2, 52], [1, 111],
-            [1, 948], [-0.49, -0.2], [-10, 10], [100, 1000], [0, 10],
-        ]
-    return [
-        [0.1, 14], [0.3, 4.6], [2, 917], [10, 329], [0.4, 24],
-        [2, 3398], [0.1, 0.4], [-100, 100], [0, 10], [100, 1000],
-    ]
 
 
 def monte_carlo_glue(
@@ -111,8 +100,6 @@ def monte_carlo_glue(
     criteria_bounds=None, output_dir="results/glue",
 ):
     """Run a Monte Carlo / GLUE calibration and save accepted simulations."""
-    if criteria_bounds is None:
-        criteria_bounds = _default_criteria_bounds(month)
 
     parameter_names, parameter_bounds = get_active_parameters(
         month, hillslope, remobilization, deposition
