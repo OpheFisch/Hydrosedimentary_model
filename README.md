@@ -1,73 +1,135 @@
 # Hydrosedimentary model
 
-Python implementation of the event-scale hydrosedimentary model used in the accompanying scientific study.
+Python implementation of the hydrosedimentary model used in the associated
+scientific study.
 
-## Model workflow
+The repository contains the model core, the Monte Carlo/GLUE calibration
+workflow, and a script for simulating a succession of hydrosedimentary flood
+events.
 
-For each rainfall event, the model follows four main steps:
-
-1. **Hydrology** — rainfall is transformed into surface runoff and groundwater discharge using linear reservoirs.
-2. **Hillslope sediment production** — sediment concentration is related to surface runoff and shifted according to the hillslope-to-channel transfer time.
-3. **Channel remobilization** — previously deposited sediment is remobilized when discharge exceeds a critical threshold.
-4. **Deposition** — suspended sediment is removed according to the deposition relationship, producing the outlet sediment concentration.
-
-The model then computes discharge, sediment-export, deposition and hysteresis criteria used in Monte Carlo / GLUE calibration.
-
-## Repository structure
+## Repository contents
 
 ```text
-hydrosedimentary_model_public/
-├── README.md
-├── requirements.txt
+hydrosedimentary-model/
+├── src/
+│   ├── __init__.py
+│   ├── hydrosedimentary_model.py
+│   └── routines_modele.py
 ├── scripts/
-│   └── run_glue.py
-└── src/
-    ├── __init__.py
-    ├── hydrosedimentary_model.py
-    └── routines_modele.py
+│   ├── run_glue.py
+│   └── run_event_sequence.py
+├── requirements.txt
+└── README.md
 ```
 
-`routines_modele.py` contains the numerical model core. `hydrosedimentary_model.py` contains parameter handling and Monte Carlo / GLUE utilities. 
+### Main modules
+
+- `src/hydrosedimentary_model.py`: model-level functions, construction of
+  parameter vectors, criterion validation, and Monte Carlo/GLUE simulations.
+- `src/routines_modele.py`: numerical routines for rainfall generation,
+  hydrological response, hillslope sediment production, channel
+  remobilisation, deposition, and hysteresis calculations.
+- `scripts/run_glue.py`: example entry point for a Monte Carlo/GLUE
+  simulation.
+- `scripts/run_event_sequence.py`: simulation of successive flood events.
+  The sediment-deposit stock is transferred from one event to the next.
+
+The repository contains only the routines required by the hydrosedimentary
+model. Auxiliary routines from the original research workspace are not
+included because they are not dependencies of the model core.
 
 ## Installation
 
+From the repository root:
+
 ```bash
-python -m pip install -r requirements.txt
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 ```
 
-## Example
+On Windows:
 
-From the repository root:
+```powershell
+.venv\Scripts\activate
+```
+
+## Running a GLUE simulation
+
+A small example is provided for testing the repository:
 
 ```bash
 python scripts/run_glue.py
 ```
 
-The example uses a small number of simulations. For the production experiments, adjust `N` in `scripts/run_glue.py` to the number used in the study.
+The example uses `N=1000`. The production number of simulations can be
+changed in the script according to the protocol used in the study.
 
-## Main model function
+## Running a succession of floods
 
-The complete event simulation is performed by:
+`scripts/run_event_sequence.py` propagates the sediment-deposit stock through
+a sequence of flood events. Six characteristic flood types are represented:
 
-```python
-from routines_modele import simulate_hydrosedimentary_event
+- M-S: minor summer flood
+- I-S: intermediate summer flood
+- E-S: major summer flood
+- M-W: minor winter flood
+- I-W: intermediate winter flood
+- E-W: major winter flood
+
+The script samples one accepted parameter vector from the corresponding GLUE
+distribution for each event and then simulates the event with the sediment
+stock left by the previous event.
+
+The default configuration applies the rainfall-frequency and intensity
+changes used in the RCP 8.1-9.1 scenario of the study.
+
+The GLUE CSV files required by the succession experiment must be placed in
+the directory supplied with `--glue-dir`. For example:
+
+```bash
+python scripts/run_event_sequence.py \
+    --glue-dir results/glue \
+    --output results/event_sequence.csv
 ```
 
-The main calculation is documented directly in the source code, including the physical meaning and units of the intermediate variables.
+For a quick test:
 
-## Important quantities
+```bash
+python scripts/run_event_sequence.py \
+    --glue-dir results/glue \
+    --output results/event_sequence_test.csv \
+    --n-years 1 \
+    --n-simulations 1 \
+    --seed 42
+```
 
-The model uses explicit names for the main physical quantities, including:
+The `--seed` option can be used to make the random sequence reproducible.
 
-- `total_discharge_m3_s`
-- `surface_runoff_m3_s`
-- `groundwater_m3_s`
-- `hillslope_concentration_g_l`
-- `remobilized_concentration_g_l`
-- `deposition_rate_g_m2_s`
-- `deposition_concentration`
-- `outlet_sediment_concentration_g_l`
+The required GLUE files are not included in this repository unless they are
+explicitly made available with the software release.
 
-## Reproducibility
+## Results
 
-The repository is intended to contain the code required to reproduce the model calculations. Site-specific input data and calibration results should be archived separately and linked to the publication or DOI.
+Simulation outputs are written to the directory specified by `--output`.
+The `results/` directory is generated at runtime and is not required for
+importing the model.
+
+## Reproducibility and provenance
+
+The original research code contained personal absolute paths and experimental
+runs executed directly when scripts were imported. These elements were
+removed from the public version so that the model can be used from a clean
+repository without access to the original author's filesystem.
+
+The public version focuses on the model components and analysis scripts
+required for the associated scientific study. Function and variable names
+have been expanded where appropriate to make the workflow easier to read and
+reuse.
+
+## Citation
+
+When this repository is associated with a published article, the exact
+version used for the study should be archived with a version-specific DOI,
+for example through Zenodo. The DOI should then be added to this section and
+to the manuscript's software/data availability statement.
