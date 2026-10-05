@@ -123,7 +123,8 @@ def compute_channel_remobilization(
     critical_discharge_m3_s : float
         Discharge threshold above which remobilization occurs.
     sediment_transfer_time_min : int
-        Transfer time between remobilization and outlet concentration.
+        Transfer time between remobilization and outlet concentration. 
+        Negative values are allowed and represent sediment peak arraving before discharge peak
 
     Returns
     -------
@@ -154,15 +155,19 @@ def compute_channel_remobilization(
     # Update the sediment stock through time. The time step is one minute,
     # hence the conversion from g/s to g uses a factor of 60.
     remaining_deposit_g = initial_deposit_g
-    for step in range(n_steps):
-        remaining_deposit_g -= remobilized_flux_g_s[step] * 60
-        remaining_deposit_g = max(remaining_deposit_g, 0)
-
+    for step in range(n_steps): 
+        available_g = remaining_deposit_g
+        requested_g = remobilized_flux_g_s[step] * 60
+        if available_g>=requested_g:
+            remaining_deposit_g -= requested_g
         # Once the available deposit is exhausted, no further remobilization
         # can occur during this event.
-        if remaining_deposit_g == 0:
-            shifted_concentration[step:] = 0
-            remobilized_flux_g_s[step:] = 0
+        if available_g<requested_g:
+            remaining_deposit_g =0
+            remobilized_flux_g_s[step] = available_g / 60
+            if step<n_steps-1:
+                shifted_concentration[step+1:] = 0
+                remobilized_flux_g_s[step+1:] = 0
             break
 
     return shifted_concentration, remobilized_flux_g_s, remaining_deposit_g
@@ -245,227 +250,295 @@ def compute_hysteresis_index(discharge_m3_s, sediment_concentration_g_l, n_level
     return np.nanmean(hysteresis_values)
 
 
+
+PARAMETER_NAMES = [
+    "alpha_SR",
+    "alpha_GW",
+    "T_Q",
+    "a_hillslope",
+    "T_hillslope",
+    "a_remob",
+    "T_remob",
+    "Qc_remob",
+    "a_depo",
+    "Qc_depo",
+]
+
+
 def simulate_hydrosedimentary_event(
     rainfall_mm_min,
     initial_deposit_g,
     parameters,
     deposition=True,
     remobilization=True,
-    groundwater_reduction_fraction=0,
+    groundwater_reduction_fraction=0.0,
 ):
-    """Run one complete hydrosedimentary event.
-
-    The simulation is organized into four physical steps:
-
-    1. **Hydrology:** surface runoff and groundwater discharge are simulated
-       with two linear reservoirs.
-    2. **Hillslope erosion:** sediment concentration is linked to surface runoff
-       and delayed by the hillslope-to-channel transfer time.
-    3. **Channel remobilization:** previously deposited sediment is released
-       when discharge exceeds the remobilization threshold.
-    4. **Deposition:** suspended sediment is removed according to the
-       deposition relationship and the resulting outlet concentration is
-       calculated.
+    """Simulate one complete hydrosedimentary event.
 
     Parameters
     ----------
     rainfall_mm_min : array-like
-        Rainfall intensity through time (mm/min).
+        Rainfall intensity time series (mm/min).
     initial_deposit_g : float
-        Initial mass of sediment stored in the channel (g).
-    parameters : sequence of 11 floats
-        Model parameters in the following order::
-
-        alpha_SR, tps_SR, alpha_GW, tps_GW, a_SR,
-        tps_sed_versants, a_lit, tps_sed_lit, Qc_remob,
-        a_depot, Qc_depot
+        Initial channel sediment stock (g).
+    parameters : sequence of 10 floats
+        Model parameters in the following order:
+        PARAMETER_NAMES.
     deposition : bool, default=True
-        Activate the deposition process.
+        Whether channel deposition is activated.
     remobilization : bool, default=True
-        Activate channel remobilization.
-    groundwater_reduction_fraction : float, default=0
-        Fractional reduction applied to groundwater runoff.
+        Whether channel sediment remobilization is activated.
+    groundwater_reduction_fraction : float, default=0.0
+        Fractional reduction in groundwater contribution, between 0 and 1.
 
     Returns
     -------
     erosion : dict
         Simulated discharge and sediment time series.
     float
-        Final channel sediment stock in tonnes.
+        Final channel sediment stock (tonnes).
     list
-        Ten model criteria used by GLUE.
+        Nine model criteria used by GLUE, in the order defined by
+        CRITERIA_NAMES.
     """
+    import numpy as np
+
+    # --------------------------------------------------------------
+    # 1. Validate and unpack parameters
+    # --------------------------------------------------------------
+    parameters = np.asarray(parameters, dtype=float)
+
+    if parameters.size != len(PARAMETER_NAMES):
+        raise ValueError(
+            f"Expected {len(PARAMETER_NAMES)} parameters "
+            f"({PARAMETER_NAMES}), received {parameters.size}."
+        )
+
+    if not 0.0 <= groundwater_reduction_fraction <= 1.0:
+        raise ValueError(
+            "groundwater_reduction_fraction must be between 0 and 1."
+        )
+
     (
-        runoff_coefficient_surface,
-        response_time_surface,
-        runoff_coefficient_groundwater,
-        response_time_groundwater,
-        hillslope_coefficient,
-        hillslope_transfer_time,
-        channel_coefficient,
-        channel_transfer_time,
-        critical_remobilization_discharge,
-        deposition_coefficient,
-        critical_deposition_discharge,
+        alpha_SR,
+        alpha_GW,
+        T_Q,
+        a_hillslope,
+        T_hillslope,
+        a_remob,
+        T_remob,
+        Qc_remob,
+        a_depo,
+        Qc_depo,
     ) = parameters
 
-    # Groundwater reduction is applied only to the perturbed groundwater
-    # contribution. The unmodified groundwater series is retained so that the
-    # model can account for the effect of the reduction on sediment flux.
-    original_groundwater_coefficient = runoff_coefficient_groundwater
-    runoff_coefficient_groundwater *= 1 - groundwater_reduction_fraction
+    rainfall_mm_min = np.asarray(rainfall_mm_min, dtype=float)
 
-    response_time_surface = int(response_time_surface)
-    response_time_groundwater = int(response_time_groundwater)
-    hillslope_transfer_time = int(hillslope_transfer_time)
-    channel_transfer_time = int(channel_transfer_time)
+    if rainfall_mm_min.ndim != 1 or rainfall_mm_min.size == 0:
+        raise ValueError("rainfall_mm_min must be a non-empty 1D array.")
 
-    # ------------------------------------------------------------------
-    # 1. HYDROLOGY
-    # ------------------------------------------------------------------
+    if not np.all(np.isfinite(rainfall_mm_min)):
+        raise ValueError("rainfall_mm_min contains non-finite values.")
+
+    if np.any(rainfall_mm_min < 0):
+        raise ValueError("Rainfall intensity cannot be negative.")
+
+    if initial_deposit_g < 0:
+        raise ValueError("initial_deposit_g cannot be negative.")
+
+    T_Q = int(T_Q)
+    T_hillslope = int(T_hillslope)
+    T_remob = int(T_remob)
+
+    # Preserve the original groundwater coefficient for the correction.
+    alpha_GW_original = alpha_GW
+    alpha_GW_effective = alpha_GW * (
+        1.0 - groundwater_reduction_fraction
+    )
+
+    # --------------------------------------------------------------
+    # 2. Hydrology
+    # --------------------------------------------------------------
     surface_runoff_m3_s = simulate_reservoir_discharge(
         rainfall_mm_min,
-        runoff_coefficient_surface,
-        response_time_surface,
-        catchment_area_km2=20,
-        time_step_min=1,
-        rainfall_threshold_mm_min=0,
-    )
-    groundwater_m3_s = simulate_reservoir_discharge(
-        rainfall_mm_min,
-        runoff_coefficient_groundwater,
-        response_time_groundwater,
-        catchment_area_km2=20,
-        time_step_min=1,
-        rainfall_threshold_mm_min=0,
-    )
-    original_groundwater_m3_s = simulate_reservoir_discharge(
-        rainfall_mm_min,
-        original_groundwater_coefficient,
-        response_time_groundwater,
+        alpha_SR,
+        T_Q,
         catchment_area_km2=20,
         time_step_min=1,
         rainfall_threshold_mm_min=0,
     )
 
-    n_steps = min(len(surface_runoff_m3_s), len(groundwater_m3_s))
+    groundwater_m3_s = simulate_reservoir_discharge(
+        rainfall_mm_min,
+        alpha_GW_effective,
+        T_Q,
+        catchment_area_km2=20,
+        time_step_min=1,
+        rainfall_threshold_mm_min=0,
+    )
+
+    original_groundwater_m3_s = simulate_reservoir_discharge(
+        rainfall_mm_min,
+        alpha_GW_original,
+        T_Q,
+        catchment_area_km2=20,
+        time_step_min=1,
+        rainfall_threshold_mm_min=0,
+    )
+
+    n_steps = min(
+        len(surface_runoff_m3_s),
+        len(groundwater_m3_s),
+        len(original_groundwater_m3_s),
+    )
+
     surface_runoff_m3_s = surface_runoff_m3_s[:n_steps]
     groundwater_m3_s = groundwater_m3_s[:n_steps]
     original_groundwater_m3_s = original_groundwater_m3_s[:n_steps]
 
-    total_discharge_m3_s = surface_runoff_m3_s + groundwater_m3_s
-    original_total_discharge_m3_s = surface_runoff_m3_s + original_groundwater_m3_s
-
-    # ------------------------------------------------------------------
-    # 2. HILLSLOPE SEDIMENT PRODUCTION
-    # ------------------------------------------------------------------
-    hillslope_concentration_g_l, _ = compute_hillslope_sediment_concentration(
-        total_discharge_m3_s,
-        surface_runoff_m3_s,
-        hillslope_transfer_time,
-        hillslope_coefficient,
+    total_discharge_m3_s = (
+        surface_runoff_m3_s + groundwater_m3_s
+    )
+    original_total_discharge_m3_s = (
+        surface_runoff_m3_s + original_groundwater_m3_s
     )
 
-    # Correct the sediment concentration for the groundwater perturbation by
-    # preserving the original sediment flux relative to the reference flow.
-    with np.errstate(divide="ignore", invalid="ignore"):
-        groundwater_correction_factor = np.divide(
-            original_total_discharge_m3_s,
+    # --------------------------------------------------------------
+    # 3. Hillslope sediment production
+    # --------------------------------------------------------------
+    hillslope_concentration_g_l, _ = (
+        compute_hillslope_sediment_concentration(
             total_discharge_m3_s,
-            out=np.ones_like(total_discharge_m3_s),
-            where=total_discharge_m3_s > 0,
+            surface_runoff_m3_s,
+            T_hillslope,
+            a_hillslope,
         )
-    hillslope_concentration_g_l *= groundwater_correction_factor
-    hillslope_flux_g_s = hillslope_concentration_g_l * total_discharge_m3_s * 1e3
+    )
 
-    # ------------------------------------------------------------------
-    # 3. CHANNEL REMOBILIZATION
-    # ------------------------------------------------------------------
-    remaining_deposit_g = initial_deposit_g
+    # Preserve the reference sediment flux when groundwater is reduced.
+    groundwater_correction_factor = np.divide(
+        original_total_discharge_m3_s,
+        total_discharge_m3_s,
+        out=np.ones_like(total_discharge_m3_s),
+        where=total_discharge_m3_s > 0,
+    )
+
+    hillslope_concentration_g_l = (
+        hillslope_concentration_g_l * groundwater_correction_factor
+    )
+
+    hillslope_flux_g_s = (
+        hillslope_concentration_g_l * total_discharge_m3_s * 1e3
+    )
+
+    # --------------------------------------------------------------
+    # 4. Channel sediment remobilization
+    # --------------------------------------------------------------
+    remaining_deposit_g = float(initial_deposit_g)
     remobilized_concentration_g_l = np.zeros(n_steps)
     remobilized_flux_g_s = np.zeros(n_steps)
     remobilized_mass_t = 0.0
 
-    if remobilization and initial_deposit_g > 0 and channel_coefficient > 0:
+    if remobilization and remaining_deposit_g > 0 and a_remob > 0:
         (
             remobilized_concentration_g_l,
             remobilized_flux_g_s,
             remaining_deposit_g,
         ) = compute_channel_remobilization(
             total_discharge_m3_s,
-            initial_deposit_g,
-            channel_coefficient,
-            critical_remobilization_discharge,
-            channel_transfer_time,
+            remaining_deposit_g,
+            a_remob,
+            Qc_remob,
+            T_remob,
         )
-        remobilized_mass_t = np.sum(remobilized_flux_g_s) * 60 * 1e-6
+
+        remobilized_mass_t = (
+            np.sum(remobilized_flux_g_s) * 60 * 1e-6
+        )
 
     total_suspended_concentration_g_l = (
         hillslope_concentration_g_l + remobilized_concentration_g_l
     )
 
-    # ------------------------------------------------------------------
-    # 4. DEPOSITION
-    # ------------------------------------------------------------------
+    # --------------------------------------------------------------
+    # 5. Sediment deposition
+    # --------------------------------------------------------------
     deposited_mass_during_event_g = 0.0
+    deposition_concentration_g_l = np.zeros(n_steps)
 
-    if deposition and deposition_coefficient > 0:
-        # Deposition is expressed as a mass flux per unit area (g/m2/s).
+    if deposition and a_depo > 0:
         deposition_rate_g_m2_s = (
-            deposition_coefficient * total_suspended_concentration_g_l * 1e3
+            a_depo * total_suspended_concentration_g_l * 1e3
         )
-        deposition_rate_g_m2_s[total_discharge_m3_s > critical_deposition_discharge] = 0
-        deposition_rate_g_m2_s *= (
-            critical_deposition_discharge - total_discharge_m3_s
-        )
-        deposition_rate_g_m2_s[deposition_rate_g_m2_s < 0] = 0
 
-        # Convert the deposition rate into a concentration-equivalent quantity
-        # before subtracting it from the suspended sediment concentration.
-        deposition_concentration = deposition_rate_g_m2_s / (
-            total_discharge_m3_s * 1e3 + 1e-9
+        deposition_rate_g_m2_s *= np.maximum(
+            Qc_depo - total_discharge_m3_s,
+            0.0,
+        )
+
+        deposition_concentration_g_l = (
+            deposition_rate_g_m2_s
+            / (total_discharge_m3_s * 1e3 + 1e-9)
         )
 
         outlet_sediment_concentration_g_l = np.maximum(
-            total_suspended_concentration_g_l - deposition_concentration,
-            0,
+            total_suspended_concentration_g_l
+            - deposition_concentration_g_l,
+            0.0,
         )
 
         deposited_mass_during_event_g = (
             np.sum(
-                (total_suspended_concentration_g_l - outlet_sediment_concentration_g_l)
+                (
+                    total_suspended_concentration_g_l
+                    - outlet_sediment_concentration_g_l
+                )
                 * total_discharge_m3_s
                 * 1e3
             )
             * 60
         )
-        remaining_deposit_g += deposited_mass_during_event_g
-    else:
-        outlet_sediment_concentration_g_l = total_suspended_concentration_g_l
-        deposition_concentration = np.zeros(n_steps)
 
-    # ------------------------------------------------------------------
-    # 5. MODEL CRITERIA
-    # ------------------------------------------------------------------
+        remaining_deposit_g += deposited_mass_during_event_g
+
+    else:
+        outlet_sediment_concentration_g_l = (
+            total_suspended_concentration_g_l.copy()
+        )
+
+    # --------------------------------------------------------------
+    # 6. Model criteria
+    # --------------------------------------------------------------
     maximum_discharge_m3_s = np.max(total_discharge_m3_s)
     maximum_surface_runoff_m3_s = np.max(surface_runoff_m3_s)
-    total_runoff_volume_m3 = np.sum(total_discharge_m3_s) * 60 * 1e-3
-    surface_runoff_volume_m3 = np.sum(surface_runoff_m3_s) * 60 * 1e-3
-    maximum_outlet_concentration_g_l = np.max(outlet_sediment_concentration_g_l)
+
+    total_runoff_volume_m3 = (
+        np.sum(total_discharge_m3_s) * 60 * 1e-3
+    )
+    surface_runoff_volume_m3 = (
+        np.sum(surface_runoff_m3_s) * 60 * 1e-3
+    )
+
+    maximum_outlet_concentration_g_l = np.max(
+        outlet_sediment_concentration_g_l
+    )
+
     exported_sediment_t = (
-        np.sum(outlet_sediment_concentration_g_l * total_discharge_m3_s)
+        np.sum(
+            outlet_sediment_concentration_g_l * total_discharge_m3_s
+        )
         * 60
         * 1e-3
     )
-    hysteresis_index = compute_hysteresis_index(
-        total_discharge_m3_s, outlet_sediment_concentration_g_l
-    )
 
-    # Phase lag is currently fixed to zero in the original model.
-    phase_lag_min = 0
+    hysteresis_index = compute_hysteresis_index(
+        total_discharge_m3_s,
+        outlet_sediment_concentration_g_l,
+    )
 
     if not deposition:
         deposited_mass_during_event_g = 0.0
+
     if not remobilization:
         remobilized_mass_t = 0.0
 
@@ -477,11 +550,13 @@ def simulate_hydrosedimentary_event(
         maximum_outlet_concentration_g_l,
         exported_sediment_t,
         hysteresis_index,
-        phase_lag_min,
         deposited_mass_during_event_g * 1e-6,
         remobilized_mass_t,
     ]
 
+    # --------------------------------------------------------------
+    # 7. Collect time series and return results
+    # --------------------------------------------------------------
     erosion = {
         "Q": total_discharge_m3_s,
         "Q_SR": surface_runoff_m3_s,
@@ -489,7 +564,9 @@ def simulate_hydrosedimentary_event(
         "SSC_versants": hillslope_concentration_g_l,
         "SSC_remob": remobilized_concentration_g_l,
         "SSC_out": outlet_sediment_concentration_g_l,
-        "deposition_concentration": deposition_concentration,
+        "deposition_concentration": deposition_concentration_g_l,
     }
 
-    return erosion, remaining_deposit_g * 1e-6, criteria
+    final_deposit_t = remaining_deposit_g * 1e-6
+
+    return erosion, final_deposit_t, criteria

@@ -19,71 +19,69 @@ CRITERIA_NAMES = [
     "SSCmax",
     "Vs",
     "HI",
-    "phase_lag",
     "deposited_mass",
     "remobilized_mass",
 ]
 
 
+
+
 def get_active_parameters(month, hillslope=True, remobilization=True, deposition=True):
     """Return calibration parameter names and bounds for a given month."""
     parameter_names = [
-        "alpha_SR", "tps_SR", "alpha_GW", "tps_GW",
-        "a_SR", "tps_sed_versants",
-    ]
+        "alpha_SR","alpha_GW","T_Q","a_hillslope","T_hillslope"]
 
     if 5 <= month <= 9:
         parameter_bounds = [
-            [0.004, 0.2], [18, 250], [0.01, 0.9], [18, 250], [17, 211], [0, 34]
+            [0.004, 0.2], [0.01, 0.9], [18, 250], [17, 211], [0, 34]
         ]
     else:
         parameter_bounds = [
-            [0.01, 0.35], [232, 3273], [0.03, 1], [232, 3273], [0, 13], [0, 34]
+            [0.01, 0.35], [0.03, 1], [232, 3273], [0, 13], [0, 34]
         ]
 
     if remobilization:
-        parameter_names += ["a_lit", "tps_sed_lit", "Qc_remob"]
+        parameter_names += ["a_remob", "T_remob", "Qc_remob"]
         parameter_bounds += [[0.01, 7], [-60, 0], [3, 6]]
 
     if deposition:
-        parameter_names += ["a_depot", "Qc_depot"]
+        parameter_names += ["a_depo", "Qc_depo"]
         parameter_bounds += [[4e-3, 1.7], [1, 5]]
 
     return parameter_names, parameter_bounds
 
 
 def build_full_parameter_vector(active_parameters, hillslope=True, remobilization=True, deposition=True):
-    """Reconstruct the complete 11-parameter model vector."""
+    """Reconstruct the complete 10-parameter model vector."""
     index = 0
     alpha_SR = active_parameters[index]; index += 1
-    tps_SR = int(round(active_parameters[index])); index += 1
     alpha_GW = active_parameters[index]; index += 1
-    tps_GW = active_parameters[index]; index += 1
+    T_Q = active_parameters[index]; index += 1
 
     if hillslope:
-        a_SR = active_parameters[index]; index += 1
-        tps_sed_versants = int(round(active_parameters[index])); index += 1
+        a_hillslope = active_parameters[index]; index += 1
+        T_hillslope = int(round(active_parameters[index])); index += 1
     else:
-        a_SR = 0.0
-        tps_sed_versants = 0
+        a_hillslope = 0.0
+        T_hillslope = 0
         index += 2
 
     if remobilization:
-        a_lit = active_parameters[index]; index += 1
-        tps_sed_lit = int(round(active_parameters[index])); index += 1
+        a_remob = active_parameters[index]; index += 1
+        T_remob = int(round(active_parameters[index])); index += 1
         Qc_remob = active_parameters[index]; index += 1
     else:
-        a_lit = tps_sed_lit = Qc_remob = 0.0
+        a_remob = T_remob = Qc_remob = 0.0
 
     if deposition:
-        a_depot = active_parameters[index]; index += 1
-        Qc_depot = active_parameters[index]
+        a_depo = active_parameters[index]; index += 1
+        Qc_depo = active_parameters[index]
     else:
-        a_depot = Qc_depot = 0.0
+        a_depo = Qc_depo = 0.0
 
     return (
-        alpha_SR, tps_SR, alpha_GW, tps_GW, a_SR, tps_sed_versants,
-        a_lit, tps_sed_lit, Qc_remob, a_depot, Qc_depot,
+        alpha_SR, alpha_GW, T_Q, a_hillslope, T_hillslope,
+        a_remob, T_remob, Qc_remob, a_depo, Qc_depo,
     )
 
 
@@ -96,8 +94,7 @@ def criteria_are_valid(criteria, criteria_bounds):
 
 def monte_carlo_glue(
     n_simulations, rainfall_intensity, cumulative_rainfall, month, initial_deposit_g,
-    output_name, hillslope=True, deposition=True, remobilization=True,
-    criteria_bounds=None, output_dir="results/glue",
+    output_name,criteria_bounds, hillslope=True, deposition=True, remobilization=True, output_dir="results/glue",
 ):
     """Run a Monte Carlo / GLUE calibration and save accepted simulations."""
 
@@ -114,9 +111,6 @@ def monte_carlo_glue(
             np.random.uniform(lower, upper) for lower, upper in parameter_bounds
         ]
 
-        # The calibration imposes the same response time for surface runoff and
-        # groundwater, as in the original experiments.
-        active_parameters[3] = float(active_parameters[1])
 
         full_parameters = build_full_parameter_vector(
             active_parameters, hillslope, remobilization, deposition
