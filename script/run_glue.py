@@ -15,7 +15,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from hydrosedimentary_model import monte_carlo_glue_debug
+from hydrosedimentary_model import monte_carlo_glue
 
 
 def summer_major_example(N=1000):
@@ -28,12 +28,11 @@ def summer_major_example(N=1000):
         [20, 192],         # SSCmax
         [13, 1921],        # Vs
         [-0.5, -0.1],      # HI
-        [-10, 10],         # phase lag (min)
         [300, 1700],       # deposited mass
         [0, 100],          # remobilized mass
     ]
 
-    return monte_carlo_glue_debug(
+    return monte_carlo_glue(
         n_simulations=N,
         rainfall_intensity=11 / 15,
         cumulative_rainfall=26,
@@ -70,7 +69,6 @@ criteria_bounds = [
                 [1, 111],      # SSCmax
                 [1, 948],      # Vs 
                 [ -0.5, -0.1 ],     # HI
-                [-10 , 10], ## phase lag (min)
                 [100 , 1650],  ## deposited mass (tons) 
                 [0 , 100], ## remobilized mass (tons)
             ]
@@ -94,7 +92,6 @@ criteria_bounds = [
                 [0.5,120],      # SSCmax
                 [0.9,1200],      # Vs 
                 [ -0.5, -0.1 ],     # HI
-                [-10 , 10], ## phase lag (min)
                 [100 , 1700], ## deposited mass (tons) 
                 [0 , 100], ## remobilized mass (tons)
 ]
@@ -115,7 +112,6 @@ criteria_bounds = [
                 [0.9,66],      # SSCmax
                 [1,418],      # Vs 
                 [ -0.5, -0.16 ],     # HI
-                [-10 , 10], ## phase lag (min)
                 [0 , 1700], ## deposited mass (tons) 
                 [0 , 100], ## remobilized mass (tons)
 ]
@@ -140,7 +136,6 @@ criteria_bounds = [
                 [2 ,24],      # SSCmax
                 [2 ,3398],      # Vs 
                 [0. ,0.4],     # HI
-                [-100 , 100], ## phase lag (min)
                 [0 , 100], ## deposited mass (tons) 
                 [20 , 1500], ## remobilized mass (tons)
             ]
@@ -162,7 +157,6 @@ criteria_bounds = [
                 [8,34],      # SSCmax
                 [2000,6894],      # Vs 
                 [ 0., 0.4 ],     # HI
-                [-10 , 10], ## phase lag (min)
                 [0 , 100], ## deposited mass (tons)
                 [0 , 2000], ## remobilized mass (tons)
 ]
@@ -185,7 +179,6 @@ criteria_bounds = [
                 [0.4,26],      # SSCmax
                 [2,2478],      # Vs 
                 [ 0.,0.42 ],     # HI
-                [-10 , 10], ## phase lag (min)
                 [0 , 100], ## deposited mass (tons)
                 [0 , 1500], ## remobilized mass (tons)
 ]
@@ -209,7 +202,6 @@ criteria_bounds = [
                 [0.4,8],      # SSCmax
                 [3,248],      # Vs 
                 [ 0.0, 0.3 ],     # HI 
-                [-10 , 10], ## phase lag (min)
                 [0 , 1000], ## deposited mass (tons)
                 [0 , 1000], ## remobilized mass (tons)
 ]
